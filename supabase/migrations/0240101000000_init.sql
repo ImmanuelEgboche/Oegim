@@ -49,13 +49,16 @@ create trigger on_auth_user_created
 -- DECKS
 -- =========================================================
 create table public.decks (
-  id           uuid primary key default gen_random_uuid(),
+  id           uuid primary key default uuid_generate_v4(),
   user_id      uuid not null references auth.users(id) on delete cascade,
   name         text not null check (char_length(name) between 1 and 100),
   description  text check (char_length(description) <= 1000),
   card_count   integer not null default 0,
   created_at   timestamptz not null default now(),
-  updated_at   timestamptz not null default now()
+  updated_at   timestamptz not null default now(),
+  -- id alone is already unique (it's the PK). This extra constraint exists
+  -- only so cards can reference (deck, owner) together as a foreign key.
+  constraint decks_id_user_key unique (id, user_id)
 );
 
 create index decks_user_id_idx on public.decks(user_id);
@@ -72,14 +75,13 @@ create policy "decks_owner_all" on public.decks
 -- CARDS
 -- =========================================================
 create table public.cards (
-  id            uuid primary key default gen_random_uuid(),
-  deck_id       uuid not null references public.decks(id) on delete cascade,
-  user_id       uuid not null references auth.users(id) on delete cascade,  -- (fix #4) denormalized for indexing
+  id            uuid primary key default uuid_generate_v4(),
+  deck_id       uuid not null,                       -- standalone FK removed
+  user_id       uuid not null references auth.users(id) on delete cascade,
   front         text not null check (char_length(front) between 1 and 10000),
   back          text not null check (char_length(back) between 1 and 10000),
   front_rich    jsonb,
   back_rich     jsonb,
-  -- FSRS state
   stability     real not null default 0,
   difficulty    real not null default 0,
   due           timestamptz not null default now(),
@@ -88,7 +90,14 @@ create table public.cards (
   lapses        integer not null default 0,
   tags          text[] not null default '{}',
   created_at    timestamptz not null default now(),
-  updated_at    timestamptz not null default now()
+  updated_at    timestamptz not null default now(),
+  -- A card's deck_id AND user_id must match a real (deck, owner) pair.
+  -- It is now structurally impossible to attach a card to another user's
+  -- deck, even when user_id satisfies the RLS WITH CHECK.
+  constraint cards_deck_owner_fk
+    foreign key (deck_id, user_id)
+    references public.decks(id, user_id)
+    on delete cascade
 );
 
 -- (fix #4) Composite indexes for the hot path
